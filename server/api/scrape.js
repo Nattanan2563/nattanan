@@ -1,106 +1,87 @@
-// import axios from 'axios';
-// import * as cheerio from 'cheerio';
-
-// export default defineEventHandler(async (event) => {
-
-//     event.res.setHeader('Access-Control-Allow-Origin', '*');
-//     event.res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-//     event.res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-//     const url = 'https://www.goldtraders.or.th/'; // Replace with the URL you want to scrape
-
-//     try {
-//         // Fetch the page
-//         const { data } = await axios.get(url);
-
-//         // Load the HTML using Cheerio
-//         const $ = cheerio.load(data);
-
-//         // Example: Extract the title of the page
-//         const title = $('title').text();
-//         const associate_buy_price_goldbar = $('#DetailPlace_uc_goldprices1_lblBLBuy font').text().replace(",", "");
-//         const associate_sell_price_goldbar = $('#DetailPlace_uc_goldprices1_lblBLSell font').text().replace(",", "");
-//         const associate_buy_price_goldornament = $('#DetailPlace_uc_goldprices1_lblOMBuy font').text().replace(",", "");
-//         const associate_sell_price_goldornament = $('#DetailPlace_uc_goldprices1_lblOMSell font').text().replace(",", "");
-
-//         // Extract more data as needed
-//         // For example, to scrape all links:
-//         const links = [];
-//         $('a').each((index, element) => {
-//             links.push($(element).attr('href'));
-//         });
-
-//         // Return the scraped data
-//         return {
-//             title,
-//             associate_buy_price_goldbar,
-//             associate_sell_price_goldbar,
-//             associate_buy_price_goldornament,
-//             associate_sell_price_goldornament
-//             //   title,
-//             //   links
-//         };
-//     } catch (error) {
-//         return { error: 'Error scraping the website' };
-//     }
-// });
-
-
-
+import WebSocket, { WebSocketServer } from 'ws';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import cron from 'node-cron';
+
+const wss = new WebSocketServer({ port: 8080 });
+
+const LINE_NOTIFY_API_URL = ("https://notify-api.line.me/api/notify");
+const ACCESS_TOKEN = 'jnZKOE3Sqe2jX7AWmf50OEicKIU7vMg2cBzZdPxGD8Y';
 
 const LINE_ACCESS_TOKEN = '9401e5314ed31248212e7c41b29c8019'; // Add your LINE Channel Access Token here
 const LINE_API_URL = 'https://api.line.me/v2/bot/message/push'; // LINE API URL
 const LINE_USER_ID = '2006430757'; // The user ID to send the message to (can be a group ID or a user ID)
 
-let previousData = null; // To store the previous scraped data
+let previousData = null
 
-export default defineEventHandler(async (event) => {
+wss.on('connection', (ws) => {
+    console.log('New client connected');
+
+    ws.on('message', (message) => {
+        console.log(`Received: ${message}`);
+        // Echo the message back to the client
+        ws.send(`Server received: ${message}`);
+    });
+
+    ws.on('close', () => {
+        console.log('Client disconnected');
+    });
+});
+
+// Scraping function
+async function scrapeData() {
     const url = 'https://www.goldtraders.or.th/';
     try {
-        // Fetch the page
         const { data } = await axios.get(url);
-
-        // Load the HTML using Cheerio
         const $ = cheerio.load(data);
 
-        // Example: Extract the title of the page
-        const title = $('title').text();
         const associate_buy_price_goldbar = $('#DetailPlace_uc_goldprices1_lblBLBuy font').text().replace(",", "");
         const associate_sell_price_goldbar = $('#DetailPlace_uc_goldprices1_lblBLSell font').text().replace(",", "");
         const associate_buy_price_goldornament = $('#DetailPlace_uc_goldprices1_lblOMBuy font').text().replace(",", "");
         const associate_sell_price_goldornament = $('#DetailPlace_uc_goldprices1_lblOMSell font').text().replace(",", "");
 
-        // Create the new scraped data object
         const newData = {
-            title,
             associate_buy_price_goldbar,
             associate_sell_price_goldbar,
             associate_buy_price_goldornament,
-            associate_sell_price_goldornament
+            associate_sell_price_goldornament,
         };
 
-        // Check if the scraped data has changed
-            await sendLineMessage(`Data changed!\nTitle: ${newData.title}\nLinks: ${newData.associate_buy_price_goldbar}`);
-        // if (JSON.stringify(newData) !== JSON.stringify(previousData)) {
-        //     // Data has changed, send a message via LINE
-        //     await sendLineMessage(`Data changed!\nTitle: ${newData.title}\nLinks: ${newData.associate_buy_price_goldbar}`);
-        //     // Update the previous data
-        //     previousData = newData;
-        // }
+        console.log("A = "+JSON.stringify(newData))
+        console.log("B = "+JSON.stringify(previousData))
 
-        // Return the scraped data
+        if (JSON.stringify(newData) !== JSON.stringify(previousData)) {
+            previousData = newData
+            
+            const message = `\uD83D\uDE00\nแท่งขายออก : ${newData.associate_sell_price_goldbar}\nแท่งรับซื้อ : ${newData.associate_buy_price_goldbar}\nรูปพรรณขายออก : ${newData.associate_sell_price_goldornament}\nรูปพรรณรับซื้อ : ${newData.associate_buy_price_goldornament}`;
+            await sendLineMessage(message);
+            await sendLineNotify(message);
+
+            // Notify connected WebSocket clients of new data
+            wss.clients.forEach(client => {
+                if (client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify(newData)); // Send the new data to the client
+                    // sendLineNotify(message);
+                }
+            });
+        }
+
         return newData;
-
     } catch (error) {
-        return { error: 'Error scraping the website' };
+        console.error('Error scraping the website:', error);
+        return null;
     }
+}
+
+// Schedule scraping task
+cron.schedule('*/3 * * * * *', () => {
+    console.log('Running web scraper...');
+    scrapeData(); // Call scrapeData() every 3 seconds
 });
 
-// Function to send message via LINE Messaging API
+console.log('WebSocket server is running on ws://localhost:8080');
+
 async function sendLineMessage(message) {
-    console.log(LINE_API_URL+", "+LINE_USER_ID+", "+LINE_ACCESS_TOKEN);
     try {
         await axios.post(LINE_API_URL, {
             to: LINE_USER_ID,
@@ -116,3 +97,20 @@ async function sendLineMessage(message) {
         console.error('Failed to send message:', error.response ? error.response.data : error.message);
     }
 }
+async function sendLineNotify(message) {
+    try {
+        const response = await axios.post(LINE_NOTIFY_API_URL,
+            `message=${message}`,
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Authorization': `Bearer ${ACCESS_TOKEN}`,
+                },
+            }
+        );
+        console.log('Message sent successfully:', response.data);
+    } catch (error) {
+        console.error('Failed to send message:', error.response ? error.response.data : error.message);
+    }
+}
+
