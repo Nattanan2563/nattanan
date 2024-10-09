@@ -2,10 +2,22 @@ import WebSocket, { WebSocketServer } from 'ws';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import cron from 'node-cron';
+import http from 'http';
 
-const wss = new WebSocketServer({ port: 8080 });
+const server = http.createServer((req, res) => {
+  if (req.url === '/scrape') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(previousData || { message: 'No data yet' }));
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+});
 
-const LINE_NOTIFY_API_URL = ("https://notify-api.line.me/api/notify");
+// const wss = new WebSocketServer({ port: 8080 });
+const wss = new WebSocketServer({ server });
+
+const LINE_NOTIFY_API_URL = "https://notify-api.line.me/api/notify";
 const ACCESS_TOKEN = 'jnZKOE3Sqe2jX7AWmf50OEicKIU7vMg2cBzZdPxGD8Y';
 
 const LINE_ACCESS_TOKEN = '9401e5314ed31248212e7c41b29c8019'; // Add your LINE Channel Access Token here
@@ -54,17 +66,16 @@ async function scrapeData() {
             previousData = newData
             
             const message = `\uD83D\uDE00\nแท่งขายออก : ${newData.associate_sell_price_goldbar}\nแท่งรับซื้อ : ${newData.associate_buy_price_goldbar}\nรูปพรรณขายออก : ${newData.associate_sell_price_goldornament}\nรูปพรรณรับซื้อ : ${newData.associate_buy_price_goldornament}`;
-            await sendLineMessage(message);
+            // await sendLineMessage(message);
             await sendLineNotify(message);
 
             // Notify connected WebSocket clients of new data
-            wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify(newData)); // Send the new data to the client
-                    // sendLineNotify(message);
-                }
-            });
         }
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify(newData));
+            }
+        });
 
         return newData;
     } catch (error) {
@@ -77,6 +88,10 @@ async function scrapeData() {
 cron.schedule('*/3 * * * * *', () => {
     console.log('Running web scraper...');
     scrapeData(); // Call scrapeData() every 3 seconds
+});
+
+server.listen(8080, () => {
+  console.log('HTTP and WebSocket server running on http://localhost:8080');
 });
 
 console.log('WebSocket server is running on ws://localhost:8080');
